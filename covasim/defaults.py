@@ -180,8 +180,8 @@ def get_scen_plots():
     ''' Default scenario plots -- used in run.py '''
     plots = [
             'cum_infections',
-            'n_infectious',
-            'n_severe',
+            'cum_diagnoses',
+            'cum_severe',
+            'n_quarantined'
             ]
     return plots
-
