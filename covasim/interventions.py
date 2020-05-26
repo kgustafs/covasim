@@ -111,7 +111,7 @@ class Intervention:
         raise NotImplementedError
 
 
-    def plot(self, sim, ax=None):
+    def plot(self, sim, ax=None, **kwargs):
         '''
         Call function during plotting
 
@@ -121,16 +121,18 @@ class Intervention:
         Args:
             sim: the Sim instance
             ax: the axis instance
+            kwargs: passed to ax.axvline()
 
         Returns:
             None
         '''
+        line_args = sc.mergedicts(dict(linestyle='--', c=[0,0,0]), kwargs)
         if self.do_plot or self.do_plot is None:
             if ax is None:
                 ax = pl.gca()
             for day in self.days:
                 if day is not None:
-                    ax.axvline(day, linestyle='--', c=[0,0,0])
+                    ax.axvline(day, **line_args)
         return
 
 
@@ -169,7 +171,7 @@ class dynamic_pars(Intervention):
 
     **Examples**::
 
-        interv = cv.dynamic_pars({'beta':{'days':[14, 28], 'vals':[0.005, 0.015]}, 'diag_factor':{'days':30, 'vals':0.0}}) # Change beta, and make diagnosed people stop transmitting
+        interv = cv.dynamic_pars({'beta':{'days':[14, 28], 'vals':[0.005, 0.015]}, 'rel_death_prob':{'days':30, 'vals':2.0}}) # Change beta, and make diagnosed people stop transmitting
     '''
 
     def __init__(self, pars, do_plot=None):
@@ -277,9 +279,9 @@ class change_beta(Intervention):
 
     def __init__(self, days, changes, layers=None, do_plot=None):
         super().__init__(do_plot=do_plot)
-        self.days = days
-        self.changes = sc.promotetoarray(changes)
-        self.layers = sc.promotetolist(layers, keepnone=True)
+        self.days       = sc.dcp(days)
+        self.changes    = sc.dcp(changes)
+        self.layers     = sc.dcp(layers)
         self.orig_betas = None
         self._store_args()
         return
@@ -293,15 +295,20 @@ class change_beta(Intervention):
             for d,day in enumerate(self.days):
                 self.days[d] = sim.day(day) # Ensure it's an integer and not a string or something
         self.days = sc.promotetoarray(self.days)
+
+        self.changes = sc.promotetoarray(self.changes)
         if len(self.days) != len(self.changes):
             errormsg = f'Number of days supplied ({len(self.days)}) does not match number of changes in beta ({len(self.changes)})'
             raise ValueError(errormsg)
+
         self.orig_betas = {}
+        self.layers = sc.promotetolist(self.layers, keepnone=True)
         for lkey in self.layers:
             if lkey is None:
                 self.orig_betas['overall'] = sim['beta']
             else:
                 self.orig_betas[lkey] = sim['beta_layer'][lkey]
+
         self.initialized = True
         return
 
@@ -596,24 +603,21 @@ class contact_tracing(Intervention):
     Contact tracing of positive people.
 
     Args:
-        trace_probs (float): probability of tracing, per layer
-        trace_time (int): days required to trace, per layer
-        start_day (int): intervention start day
-        end_day (int): intervention end day
-        contact_red (float): not implemented currently, but could potentially scale contact in this intervention
-        do_plot (bool): whether or not to plot
+        trace_probs (dict): probability of tracing, per layer
+        trace_time  (dict): days required to trace, per layer
+        start_day   (int):  intervention start day
+        end_day     (int):  intervention end day
+        test_delay  (int):  number of days a test result takes
+        presumptive (bool): whether or not to begin isolation and contact tracing on the presumption of a positive diagnosis
+        do_plot     (bool): whether or not to plot
     '''
-    def __init__(self, trace_probs=None, trace_time=None, start_day=0, end_day=None, contact_red=None, do_plot=None):
+    def __init__(self, trace_probs=None, trace_time=None, start_day=0, end_day=None, presumptive=False, do_plot=None):
         super().__init__(do_plot=do_plot)
-        if trace_probs is None:
-            trace_probs = 1.0
-        if trace_time is None:
-            trace_time = 0.0
         self.trace_probs = trace_probs
         self.trace_time  = trace_time
-        self.contact_red = contact_red
         self.start_day   = start_day
         self.end_day     = end_day
+        self.presumptive = presumptive
         self._store_args()
         return
 
@@ -623,6 +627,10 @@ class contact_tracing(Intervention):
         self.start_day = sim.day(self.start_day)
         self.end_day   = sim.day(self.end_day)
         self.days      = [self.start_day, self.end_day]
+        if self.trace_probs is None:
+            self.trace_probs = 1.0
+        if self.trace_time is None:
+            self.trace_time = 0.0
         if sc.isnumber(self.trace_probs):
             val = self.trace_probs
             self.trace_probs = {k:val for k in sim.people.layer_keys()}
@@ -640,8 +648,14 @@ class contact_tracing(Intervention):
         elif self.end_day is not None and t > self.end_day:
             return
 
-        just_diagnosed_inds = cvu.true(sim.people.date_diagnosed == t) # Diagnosed this time step, time to trace
-        if len(just_diagnosed_inds): # If there are any just-diagnosed people, go trace their contacts
-            sim.people.trace(just_diagnosed_inds, self.trace_probs, self.trace_time)
+        # Figure out whom to test and trace
+        if not self.presumptive:
+            trace_from_inds = cvu.true(sim.people.date_diagnosed == t) # Diagnosed this time step, time to trace
+        else:
+            just_tested = cvu.true(sim.people.date_tested == t) # Tested this time step, time to trace
+            trace_from_inds = cvu.itruei(sim.people.exposed, just_tested) # This is necessary to avoid infinite chains of asymptomatic testing
+
+        if len(trace_from_inds): # If there are any just-diagnosed people, go trace their contacts
+            sim.people.trace(trace_from_inds, self.trace_probs, self.trace_time)
 
         return

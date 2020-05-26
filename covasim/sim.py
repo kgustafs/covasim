@@ -175,22 +175,38 @@ class Sim(cvb.BaseSim):
                 errormsg = f'You must supply one of n_days and end_day, not "{n_days}" and "{end_day}"'
                 raise ValueError(errormsg)
 
-        # Handle contacts
-        contacts = self['contacts']
-        if sc.isnumber(contacts): # It's a scalar instead of a dict, assume it's all contacts
-            self['contacts']    = {'a':contacts}
+        # Handle parameters specified by layer
+
+
+        # Try to figure out what the layer keys should be
+        layer_keys = None # e.g. household, school
+        layer_pars = ['beta_layer', 'contacts', 'iso_factor', 'quar_factor']
+        if self.people is not None:
+            layer_keys = set(self.people.contacts.keys())
+        elif isinstance(self['beta_layer'], dict):
+            layer_keys = list(self['beta_layer'].keys()) # Get keys from beta_layer since the "most required" layer parameter
+        else:
+            layer_keys = ['a'] # Assume this by default, corresponding to random/no layers
+
+        # Convert scalar layer parameters to dictionaries
+        for lp in layer_pars:
+            val = self[lp]
+            if sc.isnumber(val): # It's a scalar instead of a dict, assume it's all contacts
+                self[lp] = {k:val for k in layer_keys}
 
         # Handle key mismaches
-        beta_layer_keys = set(self.pars['beta_layer'].keys())
-        contacts_keys   = set(self.pars['contacts'].keys())
-        quar_eff_keys   = set(self.pars['quar_eff'].keys())
-        if not(beta_layer_keys == contacts_keys == quar_eff_keys):
-            errormsg = f'Layer parameters beta={beta_layer_keys}, contacts={contacts_keys}, quar_eff={quar_eff_keys} have inconsistent keys'
-            raise sc.KeyNotFoundError(errormsg)
+        for lp in layer_pars:
+            lp_keys = set(self.pars[lp].keys())
+            if not lp_keys == set(layer_keys):
+                errormsg = f'Layer parameters have inconsistent keys:'
+                for lp2 in layer_pars: # Fail on first error, but re-loop to list all of them
+                    errormsg += f'\n{lp2} = ' + ', '.join(self.pars[lp].keys())
+                raise sc.KeyNotFoundError(errormsg)
+
         if self.people is not None:
             pop_keys = set(self.people.contacts.keys())
-            if pop_keys != beta_layer_keys:
-                errormsg = f'Please update your parameter keys {beta_layer_keys} to match population keys {pop_keys}. You may find sim.reset_layer_pars() helpful.'
+            if pop_keys != layer_keys:
+                errormsg = f'Please update your parameter keys {layer_keys} to match population keys {pop_keys}. You may find sim.reset_layer_pars() helpful.'
                 raise sc.KeyNotFoundError(errormsg)
 
         # Handle population data
@@ -304,7 +320,7 @@ class Sim(cvb.BaseSim):
         self.people.initialize()
 
         # Create the seed infections
-        inds = np.arange(int(self['pop_infected']))
+        inds = cvu.choose(self['pop_size'], self['pop_infected'])
         self.people.infect(inds=inds)
         for ind in inds:
             self.people.transtree.linelist[ind] = dict(source=None, target=ind, date=self.t, layer='seed_infection')
@@ -337,6 +353,7 @@ class Sim(cvb.BaseSim):
                     n = int(n_people*(1.0-1.0/scaling_ratio)) # For example, rescaling by 2 gives n = 0.5*n_people
                     new_sus_inds = cvu.choose(max_n=n_people, n=n) # Choose who to make susceptible again
                     self.people.make_susceptible(new_sus_inds)
+                    # print(f"Rescaled by {scaling_ratio} on {self.datevec[self.t]} because {n_not_sus/n_people}")#, 2, self['verbose'])
         return
 
 
@@ -376,7 +393,6 @@ class Sim(cvb.BaseSim):
         # Compute the probability of transmission
         beta         = cvd.default_float(self['beta'])
         asymp_factor = cvd.default_float(self['asymp_factor'])
-        diag_factor  = cvd.default_float(self['diag_factor'])
         frac_time    = cvd.default_float(self['viral_dist']['frac_time'])
         load_ratio   = cvd.default_float(self['viral_dist']['load_ratio'])
         high_cap     = cvd.default_float(self['viral_dist']['high_cap'])
@@ -391,16 +407,17 @@ class Sim(cvb.BaseSim):
             betas   = layer['beta']
 
             # Compute relative transmission and susceptibility
-            rel_trans  = people.rel_trans
-            rel_sus    = people.rel_sus
-            inf        = people.infectious
-            sus        = people.susceptible
-            symp       = people.symptomatic
-            diag       = people.diagnosed
-            quar       = people.quarantined
-            quar_eff   = cvd.default_float(self['quar_eff'][lkey])
-            beta_layer = cvd.default_float(self['beta_layer'][lkey])
-            rel_trans, rel_sus = cvu.compute_trans_sus(rel_trans, rel_sus, inf, sus, beta_layer, viral_load, symp, diag, quar, asymp_factor, diag_factor, quar_eff)
+            rel_trans   = people.rel_trans
+            rel_sus     = people.rel_sus
+            inf         = people.infectious
+            sus         = people.susceptible
+            symp        = people.symptomatic
+            diag        = people.diagnosed
+            quar        = people.quarantined
+            iso_factor  = cvd.default_float(self['iso_factor'][lkey])
+            quar_factor = cvd.default_float(self['quar_factor'][lkey])
+            beta_layer  = cvd.default_float(self['beta_layer'][lkey])
+            rel_trans, rel_sus = cvu.compute_trans_sus(rel_trans, rel_sus, inf, sus, beta_layer, viral_load, symp, diag, quar, asymp_factor, iso_factor, quar_factor)
 
             # Calculate actual transmission
             for sources,targets in [[p1,p2], [p2,p1]]: # Loop over the contact network from p1->p2 and p2->p1
@@ -485,7 +502,6 @@ class Sim(cvb.BaseSim):
         # End of time loop; compute cumulative results outside of the time loop
         self.finalize(verbose=verbose) # Finalize the results
         sc.printv(f'Run finished after {elapsed:0.2f} s.\n', 1, verbose)
-        self.summary = self.summary_stats(verbose=verbose)
         if do_plot: # Optionally plot
             self.plot(**kwargs)
 
@@ -508,15 +524,21 @@ class Sim(cvb.BaseSim):
         self.results['cum_infections'].values += self['pop_infected']*self.rescale_vec[0] # Include initially infected people
 
         # Perform calculations on results
-        self.compute_doubling()
-        self.compute_r_eff()
-        self.likelihood()
+        self.compute_results()
 
         # Convert results to a odicts/objdict to allow e.g. sim.results.diagnoses
         self.results = sc.objdict(self.results)
         self.results_ready = True
         self.initialized = False # To enable re-running
 
+        return
+
+    def compute_results(self, verbose=None):
+        ''' Perform final calculations on the results '''
+        self.compute_doubling()
+        self.compute_r_eff()
+        self.compute_likelihood()
+        self.compute_summary(verbose=verbose)
         return
 
 
@@ -665,7 +687,7 @@ class Sim(cvb.BaseSim):
         return self.results['gen_time']
 
 
-    def likelihood(self, weights=None, verbose=None, eps=1e-16):
+    def compute_likelihood(self, weights=None, verbose=None, eps=1e-16):
         '''
         Compute the log-likelihood of the current simulation based on the number
         of new diagnoses.
@@ -714,7 +736,7 @@ class Sim(cvb.BaseSim):
         return loglike
 
 
-    def summary_stats(self, verbose=None):
+    def compute_summary(self, verbose=None):
         ''' Compute the summary statistics to display at the end of a run '''
 
         if verbose is None:
@@ -727,6 +749,7 @@ class Sim(cvb.BaseSim):
             if key.startswith('cum_'):
                 summary_str += f'   {summary[key]:5.0f} {self.results[key].name.lower()}\n'
         sc.printv(summary_str, 1, verbose)
+        self.summary = summary
 
         return summary
 
