@@ -7,44 +7,57 @@ webapp.
 '''
 
 import numpy as np
-import pandas as pd
 import pylab as pl
 import sciris as sc
 import datetime as dt
 import matplotlib.ticker as ticker
 import plotly.graph_objects as go
 from . import defaults as cvd
+from . import misc as cvm
 
 
-__all__ = ['plot_sim', 'plot_scens', 'plot_result', 'plot_compare', 'plot_transtree', 'animate_transtree', 'plotly_sim', 'plotly_people', 'plotly_animate']
+__all__ = ['plot_sim', 'plot_scens', 'plot_result', 'plot_compare', 'plot_people', 'plotly_sim', 'plotly_people', 'plotly_animate']
 
 
 #%% Plotting helper functions
 
-def handle_args(fig_args=None, plot_args=None, scatter_args=None, axis_args=None, fill_args=None, legend_args=None):
-    ''' Handle input arguments -- merge user input with defaults '''
+def handle_args(fig_args=None, plot_args=None, scatter_args=None, axis_args=None, fill_args=None, legend_args=None, show_args=None):
+    ''' Handle input arguments -- merge user input with defaults; see sim.plot for documentation '''
     args = sc.objdict()
     args.fig     = sc.mergedicts({'figsize': (16, 14)}, fig_args)
     args.plot    = sc.mergedicts({'lw': 3, 'alpha': 0.7}, plot_args)
-    args.scatter = sc.mergedicts({'s':70, 'marker':'s'}, scatter_args)
+    args.scatter = sc.mergedicts({'s':70, 'marker':'s', 'alpha':0.7, 'zorder':0}, scatter_args)
     args.axis    = sc.mergedicts({'left': 0.10, 'bottom': 0.05, 'right': 0.95, 'top': 0.97, 'wspace': 0.25, 'hspace': 0.25}, axis_args)
     args.fill    = sc.mergedicts({'alpha': 0.2}, fill_args)
-    args.legend  = sc.mergedicts({'loc': 'best'}, legend_args)
+    args.legend  = sc.mergedicts({'loc': 'best', 'frameon':False}, legend_args)
+    args.show    = sc.mergedicts({'data':True, 'interventions':True, 'legend':True, }, show_args)
+
+    # Handle what to show
+    show_keys = ['data', 'ticks', 'interventions', 'legend']
+    args.show = {k:True for k in show_keys}
+    if show_args in [True, False]: # Handle all on or all off
+        args.show = {k:show_args for k in show_keys}
+    else:
+        args.show = sc.mergedicts(args.show, show_args)
+
     return args
 
 
 def handle_to_plot(which, to_plot, n_cols, sim):
     ''' Handle which quantities to plot '''
 
-    if to_plot is None:
+    # If not specified or specified as a string, load defaults
+    if to_plot is None or isinstance(to_plot, str):
         if which == 'sim':
-            to_plot = cvd.get_sim_plots()
+            to_plot = cvd.get_sim_plots(to_plot)
         elif which =='scens':
-            to_plot = cvd.get_scen_plots()
+            to_plot = cvd.get_scen_plots(to_plot)
         else:
             errormsg = f'"which" must be "sim" or "scens", not "{which}"'
             raise NotImplementedError(errormsg)
-    elif isinstance(to_plot, list): # If a list of keys has been supplied
+
+    # If a list of keys has been supplied
+    if isinstance(to_plot, list):
         to_plot_list = to_plot # Store separately
         to_plot = sc.odict() # Create the dict
         for reskey in to_plot_list:
@@ -52,9 +65,14 @@ def handle_to_plot(which, to_plot, n_cols, sim):
 
     to_plot = sc.odict(sc.dcp(to_plot)) # In case it's supplied as a dict
 
-    n_rows = np.ceil(len(to_plot)/n_cols) # Number of subplot rows to have
+    # Handle rows and columns -- assume 5 is the most rows we would want
+    n_plots = len(to_plot)
+    if n_cols is None:
+        max_rows = 4 # Assumption -- if desired, the user can override this by setting n_cols manually
+        n_cols = (n_plots-1)//max_rows + 1 # This gives 1 column for 1-4, 2 for 5-8, etc.
+    n_rows = np.ceil(n_plots/n_cols) # Number of subplot rows to have
 
-    return to_plot, n_rows
+    return to_plot, n_cols, n_rows
 
 
 def create_figs(args, font_size, font_family, sep_figs, fig=None):
@@ -112,8 +130,7 @@ def plot_data(sim, ax, key, scatter_args):
     if sim.data is not None and key in sim.data and len(sim.data[key]):
         this_color = sim.results[key].color
         data_t = (sim.data.index-sim['start_day'])/np.timedelta64(1,'D') # Convert from data date to model output index based on model start date
-        ax.scatter(data_t, sim.data[key], c=[this_color], **scatter_args)
-        ax.scatter(pl.nan, pl.nan, c=[(0,0,0)], label='Data', **scatter_args)
+        ax.scatter(data_t, sim.data[key], c=[this_color], label='Data', **scatter_args)
     return
 
 
@@ -157,8 +174,12 @@ def title_grid_legend(ax, title, grid, commaticks, setylim, legend_args, show_le
     return
 
 
-def reset_ticks(ax, sim, interval, as_dates):
+def reset_ticks(ax, sim, interval, as_dates, dateformat):
     ''' Set the tick marks, using dates by default '''
+
+    # Set the default -- "Mar-01"
+    if dateformat is None:
+        dateformat = '%b-%d'
 
     # Set the x-axis intervals
     if interval:
@@ -170,7 +191,7 @@ def reset_ticks(ax, sim, interval, as_dates):
 
         @ticker.FuncFormatter
         def date_formatter(x, pos):
-            return (sim['start_day'] + dt.timedelta(days=x)).strftime('%b-%d')
+            return (sim['start_day'] + dt.timedelta(days=x)).strftime(dateformat)
 
         ax.xaxis.set_major_formatter(date_formatter)
         if not interval:
@@ -179,21 +200,18 @@ def reset_ticks(ax, sim, interval, as_dates):
     return
 
 
-def tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show, default_name='covasim.png'):
+def tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show):
     ''' Handle saving, figure showing, and what value to return '''
 
     # Handle saving
     if do_save:
-        if fig_path is None: # No figpath provided - see whether do_save is a figpath
-            fig_path = default_name # Just give it a default name
-        fig_path = sc.makefilepath(fig_path) # Ensure it's valid, including creating the folder
-        pl.savefig(fig_path)
+        if fig_path is not None: # No figpath provided - see whether do_save is a figpath
+            fig_path = sc.makefilepath(fig_path) # Ensure it's valid, including creating the folder
+        cvm.savefig(filename=fig_path) # Save the figure
 
-    # Show or close the figure
+    # Show the figure
     if do_show:
         pl.show()
-    else:
-        pl.close(fig)
 
     # Return the figure or figures
     if sep_figs:
@@ -202,17 +220,31 @@ def tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show, default_name='covas
         return fig
 
 
+def set_line_options(input_args, reskey, default):
+    '''From the supplied line argument, usually a color or label, decide what to use '''
+    if input_args is not None:
+        if isinstance(input_args, dict): # If it's a dict, pull out this value
+            output = input_args[reskey]
+        else: # Otherwise, assume it's the same value for all
+            output = input_args
+    else:
+        output = default # Default value
+    return output
+
+
+
 #%% Core plotting functions
 
 def plot_sim(sim, to_plot=None, do_save=None, fig_path=None, fig_args=None, plot_args=None,
-         scatter_args=None, axis_args=None, fill_args=None, legend_args=None, as_dates=True, dateformat=None,
-         interval=None, n_cols=1, font_size=18, font_family=None, grid=False, commaticks=True, setylim=True,
-         log_scale=False, colors=None, labels=None, do_show=True, sep_figs=False, fig=None):
+         scatter_args=None, axis_args=None, fill_args=None, legend_args=None, show_args=None,
+         as_dates=True, dateformat=None, interval=None, n_cols=None, font_size=18, font_family=None,
+         grid=False, commaticks=True, setylim=True, log_scale=False, colors=None, labels=None,
+         do_show=True, sep_figs=False, fig=None):
     ''' Plot the results of a single simulation -- see Sim.plot() for documentation '''
 
     # Handle inputs
-    args = handle_args(fig_args, plot_args, scatter_args, axis_args, fill_args, legend_args)
-    to_plot, n_rows = handle_to_plot('sim', to_plot, n_cols, sim=sim)
+    args = handle_args(fig_args, plot_args, scatter_args, axis_args, fill_args, legend_args, show_args)
+    to_plot, n_cols, n_rows = handle_to_plot('sim', to_plot, n_cols, sim=sim)
     fig, figs, ax = create_figs(args, font_size, font_family, sep_figs, fig)
 
     # Do the plotting
@@ -221,34 +253,33 @@ def plot_sim(sim, to_plot=None, do_save=None, fig_path=None, fig_args=None, plot
         for reskey in keylabels:
             res = sim.results[reskey]
             res_t = sim.results['t']
-            if colors is not None:
-                color = colors[reskey]
-            else:
-                color = res.color
-            if labels is not None:
-                label = labels[reskey]
-            else:
-                label = res.name
+            color = set_line_options(colors, reskey, res.color) # Choose the color
+            label = set_line_options(labels, reskey, res.name) # Choose the label
             if res.low is not None and res.high is not None:
                 ax.fill_between(res_t, res.low, res.high, color=color, **args.fill) # Create the uncertainty bound
-            ax.plot(res_t, res.values, label=label, **args.plot, c=color)
-            plot_data(sim, ax, reskey, args.scatter) # Plot the data
-            reset_ticks(ax, sim, interval, as_dates) # Optionally reset tick marks (useful for e.g. plotting weeks/months)
-        plot_interventions(sim, ax) # Plot the interventions
-        title_grid_legend(ax, title, grid, commaticks, setylim, args.legend) # Configure the title, grid, and legend
+            ax.plot(res_t, res.values, label=label, **args.plot, c=color) # Actually plot the sim!
+            if args.show['data']:
+                plot_data(sim, ax, reskey, args.scatter) # Plot the data
+            if args.show['ticks']:
+                reset_ticks(ax, sim, interval, as_dates, dateformat) # Optionally reset tick marks (useful for e.g. plotting weeks/months)
+        if args.show['interventions']:
+            plot_interventions(sim, ax) # Plot the interventions
+        if args.show['legend']:
+            title_grid_legend(ax, title, grid, commaticks, setylim, args.legend) # Configure the title, grid, and legend
 
-    return tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show, default_name='covasim.png')
+    return tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show)
 
 
 def plot_scens(scens, to_plot=None, do_save=None, fig_path=None, fig_args=None, plot_args=None,
-         scatter_args=None, axis_args=None, fill_args=None, legend_args=None, as_dates=True, dateformat=None,
-         interval=None, n_cols=1, font_size=18, font_family=None, grid=False, commaticks=True, setylim=True,
-         log_scale=False, colors=None, labels=None, do_show=True, sep_figs=False, fig=None):
+         scatter_args=None, axis_args=None, fill_args=None, legend_args=None, show_args=None,
+         as_dates=True, dateformat=None, interval=None, n_cols=None, font_size=18, font_family=None,
+         grid=False, commaticks=True, setylim=True, log_scale=False, colors=None, labels=None,
+         do_show=True, sep_figs=False, fig=None):
     ''' Plot the results of a scenario -- see Scenarios.plot() for documentation '''
 
     # Handle inputs
     args = handle_args(fig_args, plot_args, scatter_args, axis_args, fill_args, legend_args)
-    to_plot, n_rows = handle_to_plot('scens', to_plot, n_cols, sim=scens.base_sim)
+    to_plot, n_cols, n_rows = handle_to_plot('scens', to_plot, n_cols, sim=scens.base_sim)
     fig, figs, ax = create_figs(args, font_size, font_family, sep_figs, fig)
 
     # Do the plotting
@@ -261,34 +292,34 @@ def plot_scens(scens, to_plot=None, do_save=None, fig_path=None, fig_args=None, 
             for snum,scenkey,scendata in resdata.enumitems():
                 sim = scens.sims[scenkey][0] # Pull out the first sim in the list for this scenario
                 res_y = scendata.best
-                if colors is not None:
-                    color = colors[scenkey]
-                else:
-                    color = default_colors[snum]
-                if labels is not None:
-                    label = labels[scenkey]
-                else:
-                    label = scendata.name
+                color = set_line_options(colors, scenkey, default_colors[snum]) # Choose the color
+                label = set_line_options(labels, scenkey, scendata.name) # Choose the label
                 ax.fill_between(scens.tvec, scendata.low, scendata.high, color=color, **args.fill) # Create the uncertainty bound
                 ax.plot(scens.tvec, res_y, label=label, c=color, **args.plot) # Plot the actual line
-                plot_data(sim, ax, reskey, args.scatter) # Plot the data
-                plot_interventions(sim, ax) # Plot the interventions
-                reset_ticks(ax, sim, interval, as_dates) # Optionally reset tick marks (useful for e.g. plotting weeks/months)
-        title_grid_legend(ax, title, grid, commaticks, setylim, args.legend, pnum==0) # Configure the title, grid, and legend -- only show legend for first
+                if args.show['data']:
+                    plot_data(sim, ax, reskey, args.scatter) # Plot the data
+                if args.show['interventions']:
+                    plot_interventions(sim, ax) # Plot the interventions
+                if args.show['ticks']:
+                    reset_ticks(ax, sim, interval, as_dates, dateformat) # Optionally reset tick marks (useful for e.g. plotting weeks/months)
+        if args.show['legend']:
+            title_grid_legend(ax, title, grid, commaticks, setylim, args.legend, pnum==0) # Configure the title, grid, and legend -- only show legend for first
 
-    return tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show, default_name='covasim_scenarios.png')
+    return tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show)
 
 
 def plot_result(sim, key, fig_args=None, plot_args=None, axis_args=None, scatter_args=None,
                 font_size=18, font_family=None, grid=False, commaticks=True, setylim=True,
-                as_dates=True, dateformat=None, interval=None, color=None, label=None, fig=None):
+                as_dates=True, dateformat=None, interval=None, color=None, label=None, fig=None,
+                do_show=True, do_save=False, fig_path=None):
     ''' Plot a single result -- see Sim.plot_result() for documentation '''
 
     # Handle inputs
+    sep_figs = False # Only one figure
     fig_args  = sc.mergedicts({'figsize':(16,8)}, fig_args)
     axis_args = sc.mergedicts({'top': 0.95}, axis_args)
     args = handle_args(fig_args, plot_args, scatter_args, axis_args)
-    fig, figs, ax = create_figs(args, font_size, font_family, sep_figs=False, fig=fig)
+    fig, figs, ax = create_figs(args, font_size, font_family, sep_figs, fig)
 
     # Gather results
     res = sim.results[key]
@@ -314,9 +345,9 @@ def plot_result(sim, key, fig_args=None, plot_args=None, axis_args=None, scatter
     plot_data(sim, ax, key, args.scatter) # Plot the data
     plot_interventions(sim, ax) # Plot the interventions
     title_grid_legend(ax, res.name, grid, commaticks, setylim, args.legend) # Configure the title, grid, and legend
-    reset_ticks(ax, sim, interval, as_dates) # Optionally reset tick marks (useful for e.g. plotting weeks/months)
+    reset_ticks(ax, sim, interval, as_dates, dateformat) # Optionally reset tick marks (useful for e.g. plotting weeks/months)
 
-    return fig
+    return tidy_up(fig, figs, sep_figs, do_save, fig_path, do_show)
 
 
 def plot_compare(df, log_scale=True, fig_args=None, plot_args=None, axis_args=None, scatter_args=None,
@@ -363,181 +394,104 @@ def plot_compare(df, log_scale=True, fig_args=None, plot_args=None, axis_args=No
     return fig
 
 
-#%% Transtree functions
-def plot_transtree(tt, *args, **kwargs):
-    ''' Plot the transmission tree; see TransTree.plot() for documentation '''
+#%% Other plotting functions
+def plot_people(people, bins=None, width=1.0, font_size=18, alpha=0.6, fig_args=None, axis_args=None, plot_args=None):
+    ''' Plot statistics of a population -- see People.plot() for documentation '''
 
-    fig_args = kwargs.get('fig_args', dict(figsize=(16,10)))
+    # Handle inputs
+    if bins is None:
+        bins = np.arange(0,101)
 
-    if tt.detailed is None:
-        errormsg = 'Please run sim.people.make_detailed_transtree() before calling plotting'
-        raise ValueError(errormsg)
+    # Set defaults
+    color     = [0.1,0.1,0.1] # Color for the age distribution
+    n_rows    = 4 # Number of rows of plots
+    offset    = 0.5 # For ensuring the full bars show up
+    gridspace = 10 # Spacing of gridlines
+    zorder    = 10 # So plots appear on top of gridlines
 
-    ttlist = []
-    for entry in tt.detailed:
-        if entry and entry.source:
-            tdict = {
-                'date': entry.date,
-                'layer': entry.layer,
-                's_asymp': entry.s.is_asymp,
-                's_presymp': entry.s.is_presymp,
-                's_sev': entry.s.is_severe,
-                's_crit': entry.s.is_critical,
-                's_diag': entry.s.is_diagnosed,
-                's_quar': entry.s.is_quarantined,
-                't_quar': entry.t.is_quarantined,
-                     }
-            ttlist.append(tdict)
-
-    df = pd.DataFrame(ttlist).rename(columns={'date': 'Day'})
-    df = df.loc[df['layer'] != 'seed_infection']
-
-    df['Stage'] = 'Symptomatic'
-    df.loc[df['s_asymp'], 'Stage'] = 'Asymptomatic'
-    df.loc[df['s_presymp'], 'Stage'] = 'Presymptomatic'
-
-    df['Severity'] = 'Mild'
-    df.loc[df['s_sev'], 'Severity'] = 'Severe'
-    df.loc[df['s_crit'], 'Severity'] = 'Critical'
-
-    fig = pl.figure(**fig_args)
-    i=1; r=2; c=3
-
-    def plot(key, title, i):
-        dat = df.groupby(['Day', key]).size().unstack(key)
-        ax = pl.subplot(r,c,i);
-        dat.plot(ax=ax, legend=None)
-        pl.legend(title=None)
-        ax.set_title(title)
-
-    to_plot = {
-        'layer':'Layer',
-        'Stage':'Source stage',
-        's_diag':'Source diagnosed',
-        's_quar':'Source quarantined',
-        't_quar':'Target quarantined',
-        'Severity':'Symptomatic source severity'
-    }
-    for i, (key, title) in enumerate(to_plot.items()):
-        plot(key, title, i+1)
-
-    return fig
-
-
-def animate_transtree(tt, **kwargs):
-    ''' Plot an animation of the transmission tree; see TransTree.animate() for documentation '''
-
-    # Settings
-    animate    = kwargs.get('animate', True)
-    verbose    = kwargs.get('verbose', False)
-    msize      = kwargs.get('markersize', 10)
-    sus_color  = kwargs.get('sus_color', [0.5, 0.5, 0.5])
-    fig_args   = kwargs.get('fig_args', dict(figsize=(24,16)))
-    axis_args  = kwargs.get('axis_args', dict(left=0.10, bottom=0.05, right=0.85, top=0.97, wspace=0.25, hspace=0.25))
-    plot_args  = kwargs.get('plot_args', dict(lw=2, alpha=0.5))
-    delay      = kwargs.get('delay', 0.2)
-    font_size  = kwargs.get('font_size', 18)
-    colors     = kwargs.get('colors', None)
-    cmap       = kwargs.get('cmap', 'parula')
+    # Handle other arguments
+    fig_args  = sc.mergedicts(dict(figsize=(30,22)), fig_args)
+    axis_args = sc.mergedicts(dict(left=0.05, right=0.95, bottom=0.05, top=0.95, wspace=0.3, hspace=0.3), axis_args)
+    plot_args = sc.mergedicts(dict(lw=3, alpha=0.6, markersize=10, c=color, zorder=10), plot_args)
     pl.rcParams['font.size'] = font_size
-    if colors is None:
-        colors = sc.vectocolor(tt.pop_size, cmap=cmap)
 
-    # Initialization
-    n = tt.n_days + 1
-    frames = [list() for i in range(n)]
-    tests  = [list() for i in range(n)]
-    diags  = [list() for i in range(n)]
-    quars  = [list() for i in range(n)]
+    # Compute statistics
+    min_age = min(bins)
+    max_age = max(bins)
+    edges = np.append(bins, np.inf) # Add an extra bin to end to turn them into edges
+    age_counts = np.histogram(people.age, edges)[0]
 
-    # Construct each frame of the animation
-    for i,entry in enumerate(tt.detailed): # Loop over every person
-        frame = sc.objdict()
-        tdq = sc.objdict() # Short for "tested, diagnosed, or quarantined"
-
-        # This person became infected
-        if entry:
-            source = entry['source']
-            target = entry['target']
-            target_date = entry['date']
-            if source: # Seed infections and importations won't have a source
-                source_date = tt.detailed[source]['date']
-            else:
-                source = 0
-                source_date = 0
-
-            # Construct this frame
-            frame.x = [source_date, target_date]
-            frame.y = [source, target]
-            frame.c = colors[source]
-            frame.i = True # If this person is infected
-            frames[target_date].append(frame)
-
-            # Handle testing, diagnosis, and quarantine
-            tdq.t = target
-            tdq.d = target_date
-            tdq.c = colors[target]
-            date_t = entry.t.date_tested
-            date_d = entry.t.date_diagnosed
-            date_q = entry.t.date_known_contact
-            if ~np.isnan(date_t) and date_t<n: tests[int(date_t)].append(tdq)
-            if ~np.isnan(date_d) and date_d<n: diags[int(date_d)].append(tdq)
-            if ~np.isnan(date_q) and date_q<n: quars[int(date_q)].append(tdq)
-
-        # This person did not become infected
-        else:
-            frame.x = [0]
-            frame.y = [i]
-            frame.c = sus_color
-            frame.i = False
-            frames[0].append(frame)
-
-    # Configure plotting
+    # Create the figure
     fig = pl.figure(**fig_args)
     pl.subplots_adjust(**axis_args)
-    ax = fig.add_subplot(1,1,1)
 
-    # Create the legend
-    ax2 = pl.axes([0.85, 0.05, 0.14, 0.9])
-    ax2.axis('off')
-    lcol = colors[0]
-    na = np.nan # Shorten
-    pl.plot(na, na, '-', c=lcol, **plot_args, label='Transmission')
-    pl.plot(na, na, 'o', c=lcol, markersize=msize, **plot_args, label='Source')
-    pl.plot(na, na, '*', c=lcol, markersize=msize, **plot_args, label='Target')
-    pl.plot(na, na, 'o', c=lcol, markersize=msize*2, fillstyle='none', **plot_args, label='Tested')
-    pl.plot(na, na, 's', c=lcol, markersize=msize*1.2, **plot_args, label='Diagnosed')
-    pl.plot(na, na, 'x', c=lcol, markersize=msize*2.0, label='Known contact')
-    pl.legend()
+    # Plot age histogram
+    pl.subplot(n_rows,2,1)
+    pl.bar(bins, age_counts, color=color, alpha=alpha, width=width, zorder=zorder)
+    pl.xlim([min_age-offset,max_age+offset])
+    pl.xticks(np.arange(0, max_age+1, gridspace))
+    pl.grid(True)
+    pl.xlabel('Age')
+    pl.ylabel('Number of people')
+    pl.title(f'Age distribution ({len(people):n} people total)')
 
-    # Plot the animation
-    pl.sca(ax)
-    for day in range(n):
-        pl.title(f'Day: {day}')
-        pl.xlim([0, n])
-        pl.ylim([0, tt.pop_size])
-        pl.xlabel('Day')
-        pl.ylabel('Person')
-        flist = frames[day]
-        tlist = tests[day]
-        dlist = diags[day]
-        qlist = quars[day]
-        if verbose: print(i, flist)
-        for f in flist:
-            if verbose: print(f)
-            pl.plot(f.x[0], f.y[0], 'o', c=f.c, markersize=msize, **plot_args) # Plot sources
-            pl.plot(f.x, f.y, '-', c=f.c, **plot_args) # Plot transmission lines
-            if f.i: # If this person is infected
-                pl.plot(f.x[1], f.y[1], '*', c=f.c, markersize=msize, **plot_args) # Plot targets
-        for tdq in tlist: pl.plot(tdq.d, tdq.t, 'o', c=tdq.c, markersize=msize*2, fillstyle='none') # Tested; No alpha for this
-        for tdq in dlist: pl.plot(tdq.d, tdq.t, 's', c=tdq.c, markersize=msize*1.2, **plot_args) # Diagnosed
-        for tdq in qlist: pl.plot(tdq.d, tdq.t, 'x', c=tdq.c, markersize=msize*2.0) # Quarantine; no alpha for this
-        pl.plot([0, day], [0.5, 0.5], c='k', lw=5) # Plot the endless march of time
-        if animate: # Whether to animate
-            pl.pause(delay)
+    # Plot cumulative distribution
+    pl.subplot(n_rows,2,2)
+    age_sorted = sorted(people.age)
+    y = np.linspace(0, 100, len(age_sorted)) # Percentage, not hard-coded!
+    pl.plot(age_sorted, y, '-', **plot_args)
+    pl.xlim([0,max_age])
+    pl.ylim([0,100]) # Percentage
+    pl.xticks(np.arange(0, max_age+1, gridspace))
+    pl.yticks(np.arange(0, 101, gridspace)) # Percentage
+    pl.grid(True)
+    pl.xlabel('Age')
+    pl.ylabel('Cumulative proportion (%)')
+    pl.title(f'Cumulative age distribution (mean age: {people.age.mean():0.2f} years)')
+
+    # Calculate contacts
+    lkeys = people.layer_keys()
+    n_layers = len(lkeys)
+    contact_counts = sc.objdict()
+    for lk in lkeys:
+        layer = people.contacts[lk]
+        p1ages = people.age[layer['p1']]
+        p2ages = people.age[layer['p2']]
+        contact_counts[lk] = np.histogram(p1ages, edges)[0] + np.histogram(p2ages, edges)[0]
+
+    # Plot contacts
+    layer_colors = sc.gridcolors(n_layers)
+    share_ax = None
+    for w,w_type in enumerate(['total', 'percapita', 'weighted']): # Plot contacts in different ways
+        for i,lk in enumerate(lkeys):
+            if w_type == 'total':
+                weight = 1
+                total_contacts = 2*len(people.contacts[lk]) # x2 since each contact is undirected
+                ylabel = 'Number of contacts'
+                title = f'Total contacts for layer "{lk}": {total_contacts:n}'
+            elif w_type == 'percapita':
+                weight = np.divide(1.0, age_counts, where=age_counts>0)
+                mean_contacts = 2*len(people.contacts[lk])/len(people)
+                ylabel = 'Per capita number of contacts'
+                title = f'Mean contacts for layer "{lk}": {mean_contacts:0.2f}'
+            elif w_type == 'weighted':
+                weight = people.pars['beta_layer'][lk]*people.pars['beta']
+                total_weight = np.round(weight*len(people.contacts[lk]))
+                ylabel = 'Weighted number of contacts'
+                title = f'Total weight for layer "{lk}": {total_weight:n}'
+
+            ax = pl.subplot(n_rows, n_layers, n_layers*(w+1)+i+1, sharey=share_ax)
+            pl.bar(bins, contact_counts[lk]*weight, color=layer_colors[i], width=width, zorder=zorder, alpha=alpha)
+            pl.xlim([min_age-offset,max_age+offset])
+            pl.xticks(np.arange(0, max_age+1, gridspace))
+            pl.grid(True)
+            pl.xlabel('Age')
+            pl.ylabel(ylabel)
+            pl.title(title)
+            if w_type == 'weighted':
+                share_ax = ax # Update shared axis
 
     return fig
-
 
 
 #%% Plotly functions

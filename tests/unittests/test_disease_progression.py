@@ -3,7 +3,6 @@ Tests of simulation parameters from
 ../../covasim/README.md
 """
 import unittest
-import pytest
 
 from unittest_support_classes import CovaSimTest, TestProperties
 
@@ -147,7 +146,6 @@ class DiseaseProgressionTests(CovaSimTest):
             infectious_channel = self.get_full_result_channel(
                 ResKeys.infectious_at_timestep
             )
-            prev_infectious = None
             agents_on_infectious_day = infectious_channel[exposed_delay]
             if self.is_debugging:
                 print(f"Delay: {exposed_delay}")
@@ -164,7 +162,6 @@ class DiseaseProgressionTests(CovaSimTest):
                     self.assertEqual(infectious_channel[exposed_delay], total_agents,
                                      msg=f"With stddev 0, all {total_agents} agents should turn infectious "
                                          f"on day {exposed_delay}, instead got {agents_on_infectious_day}. ")
-                    prev_infectious = current_infectious
         pass
 
     @unittest.skip("Not fixing deviation tests now")
@@ -408,9 +405,6 @@ class DiseaseProgressionTests(CovaSimTest):
 
         incubation_duration = 30
         incubation_duration_stds = [0, 1, 2, 4]
-        prev_first_day_sympto = None
-        peak_sympto_day_value = 0
-        prev_last_day_sympto = 0
         for TEST_std in incubation_duration_stds:
             test_config = {
                 TestProperties.ParameterKeys.ProgressionKeys.exposed_to_symptomatic: incubation_duration,

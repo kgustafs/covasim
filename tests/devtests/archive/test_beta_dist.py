@@ -5,7 +5,7 @@ import covasim as cv
 import numpy as np
 from scipy.special import kl_div
 
-runs = 100
+runs = 500
 r0_const = np.zeros(runs)
 r0_twolevel = np.zeros(runs)
 r0_twolevel2 = np.zeros(runs)
@@ -36,27 +36,28 @@ base_pars['rel_severe_prob'] = 0  # Scale factor for proportion of symptomatic c
 base_pars['rel_crit_prob']   = 0  # Scale factor for proportion of severe cases that become critical
 base_pars['rel_death_prob']  = 0  # Scale factor for proportion of critical cases that result in death
 base_pars['prog_by_age']     = False
-base_pars['beta_dist']   = {'dist':'lognormal','par1':1, 'par2':0}
+base_pars['viral_dist'] = {'frac_time':.5, 'load_ratio':2, 'high_cap':4}
+
 
 for i in range(runs):
     # Configure the sim -- can also just use a normal dictionary
     pars = base_pars
     pars['rand_seed'] = i*np.random.rand()
-    pars['viral_dist'] = {'frac_time':1, 'load_ratio':1, 'high_cap':100}
+    pars['beta_dist']   = {'dist':'lognormal','par1':1, 'par2':0}
     print('Making sim ', i, '...')
     sim1 = cv.Sim(pars=pars)
     sim1.run()
-    r0_const[i] = len(sim1.people.transtree.targets[0])
+    r0_const[i] = cv.TransTree(sim1.people).r0()
     pars['rand_seed'] = i*np.random.rand()
-    pars['viral_dist'] = {'frac_time':.5, 'load_ratio':2, 'high_cap':4}
+    pars['beta_dist']   = {'dist':'lognormal','par1':1, 'par2':.3}
     sim2 = cv.Sim(pars=pars)
     sim2.run()
-    r0_twolevel[i] = len(sim2.people.transtree.targets[0])
+    r0_twolevel[i] = cv.TransTree(sim2.people).r0()
     pars['rand_seed'] = i*np.random.rand()
-    pars['viral_dist'] = {'frac_time':.3, 'load_ratio':3, 'high_cap':1}
+    pars['beta_dist']   = {'dist':'lognormal','par1':1, 'par2':.5}
     sim3 = cv.Sim(pars=pars)
     sim3.run()
-    r0_twolevel2[i] = len(sim3.people.transtree.targets[0])
+    r0_twolevel2[i] = cv.TransTree(sim3.people).r0()
 
 print('R0 constant viral load: ', np.mean(r0_const), ' +- ', np.std(r0_const))
 print('R0 two level viral load: ', np.mean(r0_twolevel), ' +- ', np.std(r0_twolevel))

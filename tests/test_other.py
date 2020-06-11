@@ -10,7 +10,6 @@ import sciris as sc
 import covasim as cv
 import pylab as pl
 
-
 do_plot = 1
 verbose = 0
 debug   = 1 # This runs without parallelization; faster with pytest
@@ -71,16 +70,20 @@ def test_base():
     # BasePeople methods
     ppl = sim.people
     ppl.get(['susceptible', 'infectious'])
-    ppl.keys(which='all_states')
-    ppl.index()
-    ppl.resize(pop_size=200)
+    ppl.keys()
+    ppl.person_keys()
+    ppl.state_keys()
+    ppl.date_keys()
+    ppl.dur_keys()
+    ppl.indices()
+    ppl._resize_arrays(pop_size=200) # This only resizes the arrays, not actually create new people
+    ppl._resize_arrays(pop_size=100) # Change back
     ppl.to_df()
     ppl.to_arr()
     ppl.person(50)
     people = ppl.to_people()
     ppl.from_people(people)
-    with pytest.raises(sc.KeyNotFoundError):
-        ppl.make_edgelist([{'invalid_key':[0,1,2]}])
+    ppl.make_edgelist([{'new_key':[0,1,2]}])
 
     # Contacts methods
     contacts = ppl.contacts
@@ -92,10 +95,10 @@ def test_base():
     len(contacts)
 
     # Transmission tree methods
-    ppl.transtree.make_targets()
-    ppl.make_detailed_transtree()
-    ppl.transtree.plot()
-    ppl.transtree.animate(animate=False)
+    transtree = sim.make_transtree()
+    transtree.plot()
+    transtree.animate(animate=False)
+    transtree.plot_histograms()
 
     # Tidy up
     remove_files(json_path, sim_path)
@@ -110,7 +113,7 @@ def test_interventions():
     sim = cv.Sim(pop_size=100, n_days=60, datafile=csv_file, verbose=verbose)
 
     # Intervention conversion
-    ce = cv.InterventionDict(**{'which': 'clip_edges', 'pars': {'start_day': 10, 'end_day':30, 'change': 0.5, 'verbose':True}})
+    ce = cv.InterventionDict(**{'which': 'clip_edges', 'pars': {'days': [10, 30], 'changes': [0.5, 1.0]}})
     print(ce)
     with pytest.raises(sc.KeyNotFoundError):
         cv.InterventionDict(**{'which': 'invalid', 'pars': {'days': 10, 'changes': 0.5}})
@@ -207,7 +210,7 @@ def test_plotting():
     fig_path = 'plotting_test.png'
 
     # Create sim with data and interventions
-    ce = cv.clip_edges(**{'start_day': 10, 'change': 0.5})
+    ce = cv.clip_edges(**{'days': 10, 'changes': 0.5})
     sim = cv.Sim(pop_size=100, n_days=60, datafile=csv_file, interventions=ce, verbose=verbose)
     sim.run(do_plot=True)
 
@@ -240,7 +243,7 @@ def test_population():
 
     # Test synthpops
     try:
-        sim = cv.Sim(pop_size=5000, pop_type='synthpops')
+        sim = cv.Sim(pop_size=500, pop_type='synthpops')
         sim.initialize()
     except Exception as E:
         errormsg = f'Synthpops test did not pass:\n{str(E)}\nNote: synthpops is optional so this exception is OK.'
@@ -252,8 +255,8 @@ def test_population():
         sim.initialize()
 
     # Save/load
-    sim = cv.Sim(pop_size=100, popfile=pop_path)
-    sim.initialize(save_pop=True)
+    sim = cv.Sim(pop_size=100, popfile=pop_path, save_pop=True)
+    sim.initialize()
     cv.Sim(pop_size=100, popfile=pop_path, load_pop=True)
     with pytest.raises(ValueError):
         cv.Sim(pop_size=101, popfile=pop_path, load_pop=True)
@@ -385,7 +388,7 @@ def test_sim():
     sim.validate_pars()
 
     # Test intervention functions and results analyses
-    cv.Sim(pop_size=100, verbose=0, interv_func=lambda sim: (sim.t==20 and (sim.__setitem__('beta', 0) or print(f'Applying lambda intervention to set beta=0 on day {sim.t}')))).run() # ...This is not the recommended way of defining interventions.
+    cv.Sim(pop_size=100, verbose=0, interventions=lambda sim: (sim.t==20 and (sim.__setitem__('beta', 0) or print(f'Applying lambda intervention to set beta=0 on day {sim.t}')))).run() # ...This is not the recommended way of defining interventions.
 
     # Test other outputs
     sim = cv.Sim(pop_size=100, verbose=0, n_days=30)
