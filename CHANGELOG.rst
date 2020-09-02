@@ -9,9 +9,66 @@ All notable changes to the codebase are documented in this file. Changes that ma
    :depth: 1
 
 
+
 ~~~~~~~~~~~~~~~~~~~~~~~
-Latest versions (1.4.x)
+Latest versions (1.5.x)
 ~~~~~~~~~~~~~~~~~~~~~~~
+
+
+Version 1.5.3 (2020-09-01)
+--------------------------
+
+- An ``AlreadyRunError`` is now raised if ``sim.run()`` is called in such a way that no timesteps will be taken. This error is a distinct type so that it can be safely caught and ignored if required, but it is anticipated that most of the time, calling ``run()`` and not taking any timesteps, would be an inadvertent error.
+- If the simulation has reached the end, ``sim.run()`` (and ``sim.step()``) will now raise an ``AlreadyRunError``.
+- ``sim.run()`` now only validates parameters as part of initialization. Parameters will always be validated in the normal workflow where ``sim.initialize()`` is called via ``sim.run()``. However, the use case for modifying parameters during a split run or otherwise modifying parameters after initialization suggests that the user should have maximum control over the parameters at this point, so in this specialist workflow, the user is responsible for setting the parameter values correctly and in return, ``sim.run()`` is guaranteed not to change them.
+- Added a ``sim.complete`` attribute, which is ``True`` if all timesteps have been executed. This is independent of finalizing results, since if ``sim.step()`` is being called externally, then finalizing the results may happen separately.
+- *GitHub info*: : PR `654 <https://github.com/amath-idm/covasim/pull/654>`__, previous head ``9041157``
+
+
+
+Version 1.5.2 (2020-08-18)
+--------------------------
+
+- Modify ``cv.People.quarantine()`` to allow it schedule future quarantines, and allow quarantines of varying duration.
+- Update the quarantine pipeline so that ``date_known_contact`` is not removed when someone goes into quarantine.
+- Fixed bug where people identified as known contacts while on quarantine would be re-quarantined at the end of their quarantine for the entire quarantine duration. Now if a quarantine is requested while someone is already on quarantine, their existing quarantine will be correctly extended where required. For example, if someone is quarantined for 14 days on day 0 so they are scheduled to leave quarantine on day 14, and they are then subsequently identified as a known contact of a separate person on day 6 requiring 14 days quarantine, in previous versions of Covasim they would be released from quarantine on day 15, and then immediately quarantined on day 16 until day 30. With this update, their original quarantine would now be extended, so they would be released from quarantine on day 20.
+- Quarantine duration via ``cv.People.trace()`` is now based on time since tracing, not time since notification, as people are typically instructed to isolate for a period after their last contact with the confirmed case, whenever that was. This results in an overall decrease in time spent in quarantine when the ``trace_time`` is greater than 0.
+- *Regression information*:
+    - Scripts that called ``cv.People.quarantine()`` directly would have also had to manually update ``sim.results['new_quarantined']``. This is no longer required, and those commands should now be removed as they will otherwise be double counted
+    - Results are expected to differ slightly because the handling of quarantines being extended has been improved, and because quarantine duration is now reduced when by the ``trace_time``.
+- *GitHub info*: PR `624 <https://github.com/amath-idm/covasim/pull/624>`__, previous head ``aaa4d7c``
+
+
+Version 1.5.1 (2020-08-17)
+--------------------------
+- Modify ``cv.BasePeople.__getitem__()`` to retrieve a person if the item is an integer, so that ``sim.people[5]`` will return a ``cv.Person`` instance
+- Modify ``cv.BasePeople.__iter__`` so that iterating over people e.g. ``for person in sim.people:`` iterates over ``cv.Person`` instances
+- *Regression information*: To restore previous behavior of ``for idx in sim.people:`` use ``for idx in range(len(sim.people)):`` instead
+- *GitHub info*: PR `623 <https://github.com/amath-idm/covasim/pull/623>`__, previous head ``775cf35``
+
+
+Version 1.5.0 (2020-07-01)
+--------------------------
+- Based on calibrations to Seattle-King County data, default parameter values have been updated to have higher dispersion and smaller differences between layers.
+- Keywords for computing goodness-of-fit (e.g. ``use_frac``) can now be passed to the ``Fit()`` object.
+- The overview plot (``to_plot='overview'``) has been updated with more plots.
+- Subtargeting of testing interventions is now more flexible: values can now be specified per person.
+- Issues with specifying DPI and for saving calling function information via ``cv.savefig()`` have been addressed.
+- Several minor plotting bugs were fixed.
+- A new function, ``cv.undefined()``, can be used to find indices for which a quantity is *not* defined (e.g., ``cv.undefined(sim.people.date_diagnosed)`` returns the indices of everyone who has never been diagnosed).
+- *Regression information*: To restore previous behavior, use the following parameter changes::
+
+    pars['beta_dist'] = {'dist':'lognormal','par1':0.84, 'par2':0.3}
+    pars['beta_layer'] = dict(h=7.0, s=0.7, w=0.7, c=0.14)
+    pars['iso_factor']  = dict(h=0.3, s=0.0, w=0.0, c=0.1)
+    pars['quar_factor'] = dict(h=0.8, s=0.0, w=0.0, c=0.3)
+
+- *GitHub info*: PR `596 <https://github.com/amath-idm/covasim/pull/596>`__, previous head ``39b1e52``
+
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Versions 1.4.x (1.4.0 – 1.4.7)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 
 Version 1.4.7 (2020-06-02)
